@@ -139,6 +139,8 @@ impl ChatClient {
                 tools: self.tool_registry.definitions(),
             };
 
+            debug!("发送 API 请求到: {}", self.url);
+
             let response = self
                 .client
                 .post(&self.url)
@@ -148,26 +150,59 @@ impl ChatClient {
                 .json(&request_body)
                 .send()?;
 
-            if !response.status().is_success() {
-                let status = response.status();
+            let status = response.status();
+
+            if !status.is_success() {
                 let error_text = response.text()?;
-                eprintln!("❌ API Error [{}]: {}", status, error_text);
+                error!("API 请求失败 [{}]", status);
+
+                // 记录详细错误日志
+                debug!("API 错误详情: {}", error_text);
+
+                // 用户友好的错误提示
+                let user_message = match status.as_u16() {
+                    401 => "认证失败，请检查 API 密钥是否正确",
+                    403 => "访问被拒绝，请检查 API 权限",
+                    429 => "请求过于频繁，请稍后重试",
+                    500..=599 => "服务器错误，请稍后重试",
+                    _ => "请求失败，请检查网络连接",
+                };
+
+                eprintln!("❌ {}", user_message);
                 self.messages.pop();
-                return Ok(());
+
+                // 返回错误而不是 Ok(())，让调用者知道发生了错误
+                return Err(format!("API Error [{}]: {}", status, user_message).into());
             }
 
             // 先获取原始文本，便于调试
             let response_text = response.text()?;
+            debug!("收到响应，长度: {} 字节", response_text.len());
+
             let result: AnthropicResponse = match serde_json::from_str(&response_text) {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("❌ JSON 解析错误: {}", e);
-                    eprintln!(
-                        "📄 原始响应 (前 500 字符): {}",
-                        &response_text[..response_text.len().min(500)]
-                    );
+                    error!("JSON 解析失败: {}", e);
+
+                    // 记录详细的解析错误信息
+                    debug!("解析错误位置: 行 {}, 列 {}", e.line(), e.column());
+                    debug!("错误类型: {:?}", e.classify());
+
+                    // 安全地截取响应内容用于调试
+                    let preview_len = response_text.len().min(500);
+                    let preview = &response_text[..preview_len];
+                    debug!("响应预览: {}", preview);
+
+                    // 检查是否是 HTML 响应（可能是代理或防火墙拦截）
+                    if response_text.trim_start().starts_with('<') {
+                        warn!("收到 HTML 响应，可能是代理或防火墙拦截");
+                        eprintln!("❌ 收到非预期的响应格式，请检查网络代理设置");
+                    } else {
+                        eprintln!("❌ 响应解析失败，请稍后重试");
+                    }
+
                     self.messages.pop();
-                    return Ok(());
+                    return Err(format!("JSON parse error: {}", e).into());
                 }
             };
 

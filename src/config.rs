@@ -215,14 +215,30 @@ fn dirs_home_dir() -> Option<PathBuf> {
 fn load_and_validate(path: PathBuf) -> Result<Settings, ConfigError> {
     // 读取文件
     let content = fs::read_to_string(&path).map_err(|e| {
-        // 不在错误信息中包含完整路径，避免信息泄露
-        ConfigError::ReadError(format!("IO 错误: {}", e.kind()))
+        // 提供有用的错误信息，但不暴露敏感内容
+        let hint = match e.kind() {
+            std::io::ErrorKind::NotFound => "文件不存在",
+            std::io::ErrorKind::PermissionDenied => "权限不足",
+            _ => "读取失败",
+        };
+        ConfigError::ReadError(format!("{} ({})", hint, path.display()))
     })?;
 
     // 解析 JSON
     let settings: Settings = serde_json::from_str(&content).map_err(|e| {
-        // 只显示解析错误的位置，不显示具体内容
-        ConfigError::ParseError(format!("第 {} 行，第 {} 列", e.line(), e.column()))
+        // 提供详细的解析错误信息以帮助调试
+        let error_type = match e.classify() {
+            serde_json::error::Category::Io => "IO 错误",
+            serde_json::error::Category::Syntax => "语法错误",
+            serde_json::error::Category::Data => "数据类型错误",
+            serde_json::error::Category::Eof => "文件意外结束",
+        };
+        ConfigError::ParseError(format!(
+            "{}: 第 {} 行，第 {} 列\n   提示: 请检查 JSON 格式是否正确，特别是引号、逗号和括号",
+            error_type,
+            e.line(),
+            e.column()
+        ))
     })?;
 
     // 验证配置

@@ -1,10 +1,10 @@
 {
-  "name": "mentat-cli",
+  "name": "@sruim/mentat-cli-mini",
   "version": "0.1.0",
   "description": "Your AI Coding Agent - Rust-powered CLI distributed via npm",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Sruimeng/mentat-code.git"
+    "url": "https://github.com/Sruimeng/mentat-code-mini.git"
   },
   "bin": {
     "mentat": "run.js"

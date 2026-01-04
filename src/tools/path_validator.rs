@@ -99,94 +99,126 @@ impl PathValidator {
     }
 
     /// 内部路径验证逻辑
+    ///
+    /// 验证步骤：
+    /// 1. 拒绝绝对路径
+    /// 2. 检查路径组件中是否包含 ".."
+    /// 3. 构建完整路径并规范化
+    /// 4. 确保路径在工作目录内
     fn validate_path(&self, path: &str) -> Result<PathBuf, PathValidationError> {
         let requested = Path::new(path);
 
-        // 1. 拒绝绝对路径
+        // 步骤 1: 拒绝绝对路径
         if requested.is_absolute() {
             return Err(PathValidationError::AbsolutePathNotAllowed);
         }
 
-        // 2. 检查路径组件中是否包含 ".."
-        for component in requested.components() {
-            if let std::path::Component::ParentDir = component {
-                return Err(PathValidationError::PathTraversalDetected);
-            }
+        // 步骤 2: 检查路径组件中是否包含 ".."
+        if self.contains_parent_dir(requested) {
+            return Err(PathValidationError::PathTraversalDetected);
         }
 
-        // 3. 构建完整路径
+        // 步骤 3: 构建完整路径
         let full_path = self.workspace_root.join(requested);
 
-        // 4. 尝试规范化路径
-        // 对于写入操作，目标文件可能不存在，所以我们需要规范化父目录
-        let canonical = if full_path.exists() {
-            full_path
-                .canonicalize()
-                .map_err(|e| PathValidationError::CanonicalizationFailed(e.to_string()))?
-        } else {
-            // 对于不存在的路径，规范化其父目录并附加文件名
-            let parent = full_path.parent();
-            let file_name = full_path.file_name();
+        // 步骤 4: 规范化路径并验证在工作目录内
+        let canonical_path = self.canonicalize_path(&full_path, requested)?;
+        let canonical_workspace = self.get_canonical_workspace()?;
 
-            match (parent, file_name) {
-                (Some(p), Some(f)) => {
-                    // 如果父目录存在，规范化它
-                    let canonical_parent = if p.exists() {
-                        p.canonicalize().map_err(|e| {
-                            PathValidationError::CanonicalizationFailed(e.to_string())
-                        })?
-                    } else {
-                        // 父目录也不存在，使用简单的路径连接
-                        // 但仍需验证它在工作目录内
-                        self.workspace_root
-                            .join(requested.parent().unwrap_or(Path::new("")))
-                    };
-                    canonical_parent.join(f)
-                }
-                _ => full_path.clone(),
-            }
-        };
-
-        // 5. 确保规范化后的路径在工作目录内
-        let canonical_workspace = self
-            .workspace_root
-            .canonicalize()
-            .map_err(|e| PathValidationError::WorkspaceDirError(e.to_string()))?;
-
-        // 检查路径是否以工作目录开头
-        // 对于不存在的路径，我们需要检查其规范化的父目录
-        let path_to_check = if canonical.exists() {
-            canonical.clone()
-        } else {
-            // 对于不存在的路径，检查其父目录链
-            let mut current = canonical.clone();
-            loop {
-                if current.exists() {
-                    match current.canonicalize() {
-                        Ok(c) => break c,
-                        Err(_) => break current,
-                    }
-                }
-                match current.parent() {
-                    Some(p) if !p.as_os_str().is_empty() => current = p.to_path_buf(),
-                    _ => break self.workspace_root.clone(),
-                }
-            }
-        };
-
-        if !path_to_check.starts_with(&canonical_workspace) {
+        // 步骤 5: 验证路径在工作目录内
+        if !self.is_within_workspace(&canonical_path, &canonical_workspace) {
             return Err(PathValidationError::PathTraversalDetected);
         }
 
         Ok(full_path)
     }
-}
 
-impl Default for PathValidator {
-    fn default() -> Self {
-        Self::new().expect("Failed to create PathValidator")
+    /// 检查路径是否包含父目录组件 (..)
+    fn contains_parent_dir(&self, path: &Path) -> bool {
+        path.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    }
+
+    /// 规范化路径，处理存在和不存在的路径
+    fn canonicalize_path(
+        &self,
+        full_path: &Path,
+        requested: &Path,
+    ) -> Result<PathBuf, PathValidationError> {
+        if full_path.exists() {
+            // 路径存在，直接规范化
+            full_path
+                .canonicalize()
+                .map_err(|e| PathValidationError::CanonicalizationFailed(e.to_string()))
+        } else {
+            // 路径不存在，规范化最近的存在的父目录
+            self.canonicalize_nonexistent_path(full_path, requested)
+        }
+    }
+
+    /// 规范化不存在的路径
+    fn canonicalize_nonexistent_path(
+        &self,
+        full_path: &Path,
+        requested: &Path,
+    ) -> Result<PathBuf, PathValidationError> {
+        let parent = full_path.parent();
+        let file_name = full_path.file_name();
+
+        match (parent, file_name) {
+            (Some(p), Some(f)) if p.exists() => {
+                // 父目录存在，规范化它并附加文件名
+                let canonical_parent = p
+                    .canonicalize()
+                    .map_err(|e| PathValidationError::CanonicalizationFailed(e.to_string()))?;
+                Ok(canonical_parent.join(f))
+            }
+            (Some(_), Some(f)) => {
+                // 父目录不存在，使用工作目录 + 相对路径
+                let parent_relative = requested.parent().unwrap_or(Path::new(""));
+                Ok(self.workspace_root.join(parent_relative).join(f))
+            }
+            _ => Ok(full_path.to_path_buf()),
+        }
+    }
+
+    /// 获取规范化的工作目录
+    fn get_canonical_workspace(&self) -> Result<PathBuf, PathValidationError> {
+        self.workspace_root
+            .canonicalize()
+            .map_err(|e| PathValidationError::WorkspaceDirError(e.to_string()))
+    }
+
+    /// 检查路径是否在工作目录内
+    fn is_within_workspace(&self, path: &Path, canonical_workspace: &Path) -> bool {
+        if path.exists() {
+            // 路径存在，直接检查
+            path.starts_with(canonical_workspace)
+        } else {
+            // 路径不存在，找到最近的存在的父目录并检查
+            let nearest_existing = self.find_nearest_existing_ancestor(path);
+            match nearest_existing.canonicalize() {
+                Ok(canonical) => canonical.starts_with(canonical_workspace),
+                Err(_) => false,
+            }
+        }
+    }
+
+    /// 找到最近的存在的祖先目录
+    fn find_nearest_existing_ancestor(&self, path: &Path) -> PathBuf {
+        let mut current = path.to_path_buf();
+        while !current.exists() {
+            match current.parent() {
+                Some(p) if !p.as_os_str().is_empty() => current = p.to_path_buf(),
+                _ => return self.workspace_root.clone(),
+            }
+        }
+        current
     }
 }
+
+// 注意：不实现 Default trait，因为 PathValidator::new() 可能失败
+// 使用者应该显式调用 PathValidator::new() 并处理错误
 
 #[cfg(test)]
 mod tests {
