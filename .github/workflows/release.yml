@@ -41,13 +41,15 @@ jobs:
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
-          cp target/${{ matrix.target }}/release/mentat-code ${{ matrix.name }}
+          cp target/${{ matrix.target }}/release/mentat-code-mini ${{ matrix.name }}
+
+
 
       - name: Rename Binary (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
-          cp target/${{ matrix.target }}/release/mentat-code.exe ${{ matrix.name }}
+          cp target/${{ matrix.target }}/release/mentat-code-mini.exe ${{ matrix.name }}
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
@@ -55,3 +57,23 @@ jobs:
           files: ${{ matrix.name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  publish-to-npm:
+    name: Publish to NPM
+    needs: build-and-upload  # ⚠️ 关键：必须等二进制构建上传完毕
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org' # 告诉 Action 我们要发到 npm
+
+      # 如果你的 npm 包在一个子目录下 (比如 npm-package)
+      - name: Publish to NPM
+        run: |
+          cd npm-package
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # ⚠️ 这里会自动读取你设置的 Secret
