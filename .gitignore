@@ -3,3 +3,5 @@
 .claude
 .env
 .mentat
+
+node_modules
