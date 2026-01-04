@@ -75,6 +75,6 @@ jobs:
       - name: Publish to NPM
         run: |
           cd npm-package
-          npm publish
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # ⚠️ 这里会自动读取你设置的 Secret
