@@ -1,0 +1,27 @@
+{
+  "name": "@sruim/mentat-cli-mini",
+  "version": "0.1.0",
+  "description": "Your AI Coding Agent - Rust-powered CLI distributed via npm",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sruimeng/mentat-code-mini.git"
+  },
+  "bin": {
+    "mentat": "run.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "keywords": [
+    "ai",
+    "coding",
+    "agent",
+    "cli",
+    "mentat"
+  ],
+  "author": "Sruimeng",
+  "license": "MIT",
+  "dependencies": {
+    "binary-install": "^1.1.0"
+  }
+}

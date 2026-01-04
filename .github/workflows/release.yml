@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-upload:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: mentat-linux-x64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: mentat-macos-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: mentat-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: mentat-win-x64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename Binary (Unix)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/mentat-code-mini ${{ matrix.name }}
+
+
+
+      - name: Rename Binary (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/mentat-code-mini.exe ${{ matrix.name }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ matrix.name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  publish-to-npm:
+    name: Publish to NPM
+    needs: build-and-upload  # ⚠️ 关键：必须等二进制构建上传完毕
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org' # 告诉 Action 我们要发到 npm
+
+      # 如果你的 npm 包在一个子目录下 (比如 npm-package)
+      - name: Publish to NPM
+        run: |
+          cd npm-package
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # ⚠️ 这里会自动读取你设置的 Secret
