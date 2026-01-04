@@ -6,8 +6,12 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write # 允许创建 Release
+
 jobs:
-  build-and-upload:
+  # 任务 1: 编译三个平台的二进制文件
+  build:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -38,29 +42,41 @@ jobs:
       - name: Build Binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Rename Binary (Unix)
-        if: matrix.os != 'windows-latest'
+      # 👇 步骤 A: 重命名并准备文件
+      - name: Prepare Binary
         shell: bash
         run: |
-          cp target/${{ matrix.target }}/release/mentat-code-mini ${{ matrix.name }}
+          # ⚠️ 注意：这里必须是你 Cargo.toml [[bin]] 里写的名字
+          # 根据之前的沟通，你的 bin 名字是 "mentat-cli-mini"
+          SRC_NAME="mentat-cli-mini"
+          
+          # Windows 下源文件有 .exe 后缀
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            cp target/${{ matrix.target }}/release/${SRC_NAME}.exe ${{ matrix.name }}
+          else
+            cp target/${{ matrix.target }}/release/${SRC_NAME} ${{ matrix.name }}
+          fi
 
-
-
-      - name: Rename Binary (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          cp target/${{ matrix.target }}/release/mentat-code-mini.exe ${{ matrix.name }}
-
+      # 👇 步骤 B: 上传到 GitHub Release (可选，方便用户手动下载)
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ matrix.name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 👇 步骤 C: 上传为 Artifact (关键！传给 NPM 任务用)
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.name }} # 给临时文件起个名
+          path: ${{ matrix.name }}
+          retention-days: 1
+
+  # 任务 2: 打包并发布到 NPM
   publish-to-npm:
     name: Publish to NPM
-    needs: build-and-upload  # ⚠️ 关键：必须等二进制构建上传完毕
+    needs: build # 必须等上面 build 任务全部完成
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,12 +85,38 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          registry-url: 'https://registry.npmjs.org' # 告诉 Action 我们要发到 npm
+          registry-url: 'https://registry.npmjs.org'
 
-      # 如果你的 npm 包在一个子目录下 (比如 npm-package)
+      # 👇 步骤 D: 下载所有编译好的二进制文件
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts # 下载到临时目录
+
+      # 👇 步骤 E: 把文件搬运到 npm-package/bin/ 目录
+      - name: Organize Binaries
+        run: |
+          mkdir -p npm-package/bin
+          
+          echo "Moving binaries to npm-package/bin/..."
+          
+          # 从 artifacts 临时目录把文件移动出来
+          # 路径结构通常是: artifacts/binary-名字/名字
+          mv artifacts/binary-mentat-linux-x64/* npm-package/bin/
+          mv artifacts/binary-mentat-macos-x64/* npm-package/bin/
+          mv artifacts/binary-mentat-macos-arm64/* npm-package/bin/
+          mv artifacts/binary-mentat-win-x64.exe/* npm-package/bin/
+          
+          # 给 Linux/Mac 二进制文件赋予执行权限 (非常重要！)
+          chmod +x npm-package/bin/*
+          
+          # 列出文件确认一下
+          ls -R npm-package/bin/
+
+      # 👇 步骤 F: 发布到 NPM
       - name: Publish to NPM
         run: |
           cd npm-package
           npm publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # ⚠️ 这里会自动读取你设置的 Secret
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

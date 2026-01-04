@@ -1,6 +1,6 @@
 {
   "name": "@sruim/mentat-code-mini",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Your AI Coding Agent - Rust-powered CLI distributed via npm",
   "repository": {
     "type": "git",
