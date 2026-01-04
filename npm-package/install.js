@@ -7,7 +7,7 @@ const https = require("https");
 const http = require("http");
 
 const REPO = "Sruimeng/mentat-code-mini";
-const NAME = "mentat-code-mini";
+const NAME = "mentat";
 
 const { version } = require("./package.json");
 
