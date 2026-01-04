@@ -1,4 +1,4 @@
-mod util;
+mod tools;
 
 use reqwest::blocking::Client;
 use rustyline::error::ReadlineError;
@@ -6,38 +6,21 @@ use rustyline::{DefaultEditor, Result as RlResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
+use tools::ToolRegistry;
 
 // ============== API 请求/响应结构 ==============
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 struct Message {
     role: String,
     content: MessageContent,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(untagged)]
 enum MessageContent {
     Text(String),
-    Blocks(Vec<ContentBlock>),
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(tag = "type")]
-enum ContentBlock {
-    #[serde(rename = "text")]
-    Text { text: String },
-    #[serde(rename = "tool_use")]
-    ToolUse {
-        id: String,
-        name: String,
-        input: Value,
-    },
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-    },
+    Blocks(Vec<Value>),
 }
 
 #[derive(Serialize)]
@@ -50,7 +33,8 @@ struct AnthropicRequest {
 
 #[derive(Deserialize, Debug)]
 struct AnthropicResponse {
-    content: Vec<ContentBlock>,
+    content: Vec<Value>,
+    #[allow(dead_code)]
     stop_reason: Option<String>,
 }
 
@@ -71,20 +55,21 @@ struct Env {
     https_proxy: Option<String>,
 }
 
-// ============== 工具执行器 ==============
+// ============== Content Block 处理 ==============
 
-fn execute_tool(name: &str, input: &Value) -> String {
-    match name {
-        "read_file" => {
-            let tool_input: util::read_file::ReadFileInput = serde_json::from_value(input.clone())
-                .unwrap_or_else(|e| util::read_file::ReadFileInput {
-                    file_path: format!("ERROR: Invalid input - {}", e),
-                });
-            let result = util::read_file::execute(&tool_input);
-            serde_json::to_string(&result).unwrap()
-        }
-        _ => format!(r#"{{"error": "Unknown tool: {}"}}"#, name),
-    }
+/// 从 Value 中提取 content block 类型和数据
+fn parse_content_block(block: &Value) -> Option<(&str, &Value)> {
+    let block_type = block.get("type")?.as_str()?;
+    Some((block_type, block))
+}
+
+/// 创建 tool_result block
+fn create_tool_result(tool_use_id: &str, content: &str) -> Value {
+    serde_json::json!({
+        "type": "tool_result",
+        "tool_use_id": tool_use_id,
+        "content": content
+    })
 }
 
 // ============== Chat Client ==============
@@ -93,7 +78,7 @@ struct ChatClient {
     client: Client,
     url: String,
     api_key: String,
-    tools: Vec<Value>,
+    tool_registry: ToolRegistry,
     messages: Vec<Message>,
     model: String,
 }
@@ -111,7 +96,7 @@ impl ChatClient {
             client,
             url: format!("{}/v1/messages", settings.env.base_url),
             api_key: settings.env.api_key.clone(),
-            tools: vec![util::read_file::tool_definition()],
+            tool_registry: ToolRegistry::with_builtins(),
             messages: Vec::new(),
             model: "claude-opus-4-5-20251101".to_string(),
         })
@@ -130,7 +115,7 @@ impl ChatClient {
                 model: self.model.clone(),
                 max_tokens: 4096,
                 messages: self.messages.clone(),
-                tools: self.tools.clone(),
+                tools: self.tool_registry.definitions(),
             };
 
             let response = self
@@ -146,37 +131,64 @@ impl ChatClient {
                 let status = response.status();
                 let error_text = response.text()?;
                 eprintln!("❌ API Error [{}]: {}", status, error_text);
-                // 移除失败的用户消息
                 self.messages.pop();
                 return Ok(());
             }
 
-            let result: AnthropicResponse = response.json()?;
+            // 先获取原始文本，便于调试
+            let response_text = response.text()?;
+            let result: AnthropicResponse = match serde_json::from_str(&response_text) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("❌ JSON 解析错误: {}", e);
+                    eprintln!("📄 原始响应 (前 500 字符): {}", &response_text[..response_text.len().min(500)]);
+                    self.messages.pop();
+                    return Ok(());
+                }
+            };
 
             // 处理响应内容
-            let mut tool_results: Vec<ContentBlock> = Vec::new();
+            let mut tool_results: Vec<Value> = Vec::new();
             let mut has_tool_use = false;
 
             for block in &result.content {
-                match block {
-                    ContentBlock::Text { text } => {
-                        println!("\n🤖 {}\n", text);
-                    }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        has_tool_use = true;
-                        println!("  🔧 [{}] {}", name, serde_json::to_string(input)?);
+                if let Some((block_type, data)) = parse_content_block(block) {
+                    match block_type {
+                        "text" => {
+                            if let Some(text) = data.get("text").and_then(|t| t.as_str()) {
+                                println!("\n🤖 {}\n", text);
+                            }
+                        }
+                        "thinking" => {
+                            if let Some(thinking) = data.get("thinking").and_then(|t| t.as_str()) {
+                                // 截取前 200 字符显示
+                                let display = if thinking.len() > 200 {
+                                    format!("{}...", &thinking[..200])
+                                } else {
+                                    thinking.to_string()
+                                };
+                                println!("\n💭 [思考中...] {}\n", display);
+                            }
+                        }
+                        "tool_use" => {
+                            has_tool_use = true;
+                            let id = data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                            let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let input = data.get("input").unwrap_or(&Value::Null);
 
-                        let tool_output = execute_tool(name, input);
-                        tool_results.push(ContentBlock::ToolResult {
-                            tool_use_id: id.clone(),
-                            content: tool_output,
-                        });
+                            println!("  🔧 [{}] {}", name, serde_json::to_string(input)?);
+
+                            let tool_output = self.tool_registry.execute(name, input);
+                            tool_results.push(create_tool_result(id, &tool_output));
+                        }
+                        _ => {
+                            // 忽略其他未知类型
+                        }
                     }
-                    _ => {}
                 }
             }
 
-            // 添加 assistant 消息
+            // 添加 assistant 消息（保留原始 content）
             self.messages.push(Message {
                 role: "assistant".to_string(),
                 content: MessageContent::Blocks(result.content.clone()),
@@ -201,6 +213,10 @@ impl ChatClient {
         self.messages.clear();
         println!("📝 对话历史已清除\n");
     }
+
+    fn tool_count(&self) -> usize {
+        self.tool_registry.len()
+    }
 }
 
 // ============== REPL 命令处理 ==============
@@ -214,17 +230,25 @@ fn handle_command(cmd: &str, client: &mut ChatClient) -> bool {
         "/clear" | "/c" => {
             client.clear_history();
         }
+        "/tools" | "/t" => {
+            println!("\n🔧 已注册的工具 ({}):", client.tool_count());
+            for name in client.tool_registry.tool_names() {
+                println!("  - {}", name);
+            }
+            println!();
+        }
         "/help" | "/h" | "/?" => {
             println!(
                 r#"
 📚 可用命令:
   /exit, /quit, /q  - 退出程序
   /clear, /c        - 清除对话历史
+  /tools, /t        - 显示已注册的工具
   /help, /h, /?     - 显示此帮助
 
 💡 提示:
   - 直接输入问题即可与 AI 对话
-  - AI 可以使用 read_file 工具读取本地文件
+  - AI 可以使用已注册的工具操作本地文件
   - 按 Ctrl+C 中断当前请求
   - 按 Ctrl+D 退出
 "#
@@ -261,8 +285,10 @@ fn main() -> RlResult<()> {
 ║                  🧠 Mentat Code v0.1.0                   ║
 ║                                                          ║
 ║  输入问题与 AI 对话，输入 /help 查看帮助                 ║
+║  已加载 {} 个工具                                         ║
 ╚══════════════════════════════════════════════════════════╝
-"#
+"#,
+        client.tool_count()
     );
 
     loop {
