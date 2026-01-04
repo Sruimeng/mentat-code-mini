@@ -1,10 +1,10 @@
 //! write_file 工具 - 写入文件内容
 
+use super::path_validator::PathValidator;
 use super::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
-use std::path::Path;
 
 /// write_file 工具的输入参数
 #[derive(Debug, Deserialize)]
@@ -70,19 +70,32 @@ impl Tool for WriteFileTool {
 
 /// 执行文件写入
 fn execute_write_file(input: &WriteFileInput) -> WriteFileOutput {
-    let path = Path::new(&input.file_path);
+    // 创建路径验证器
+    let validator = match PathValidator::new() {
+        Ok(v) => v,
+        Err(e) => {
+            return WriteFileOutput {
+                success: false,
+                message: None,
+                error: Some(format!("Failed to initialize path validator: {}", e)),
+            };
+        }
+    };
 
-    // 安全检查：禁止路径穿越
-    if input.file_path.contains("..") {
-        return WriteFileOutput {
-            success: false,
-            message: None,
-            error: Some("Path traversal not allowed".to_string()),
-        };
-    }
+    // 安全检查：验证路径
+    let validated_path = match validator.validate_for_write(&input.file_path) {
+        Ok(p) => p,
+        Err(e) => {
+            return WriteFileOutput {
+                success: false,
+                message: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
 
     // 确保父目录存在
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = validated_path.parent() {
         if !parent.as_os_str().is_empty() {
             if let Err(e) = fs::create_dir_all(parent) {
                 return WriteFileOutput {
@@ -95,7 +108,7 @@ fn execute_write_file(input: &WriteFileInput) -> WriteFileOutput {
     }
 
     // 写入文件
-    match fs::write(path, &input.content) {
+    match fs::write(&validated_path, &input.content) {
         Ok(()) => WriteFileOutput {
             success: true,
             message: Some(format!(
@@ -144,6 +157,28 @@ mod tests {
             "content": "malicious"
         });
         let result = tool.execute(&input);
-        assert!(result.contains("traversal"));
+        assert!(result.contains("traversal") || result.contains("not allowed"));
+    }
+
+    #[test]
+    fn test_absolute_path_blocked() {
+        let tool = WriteFileTool;
+        let input = serde_json::json!({
+            "file_path": "/etc/test",
+            "content": "malicious"
+        });
+        let result = tool.execute(&input);
+        assert!(result.contains("Absolute") || result.contains("not allowed"));
+    }
+
+    #[test]
+    fn test_nested_traversal_blocked() {
+        let tool = WriteFileTool;
+        let input = serde_json::json!({
+            "file_path": "src/../../../etc/test",
+            "content": "malicious"
+        });
+        let result = tool.execute(&input);
+        assert!(result.contains("traversal") || result.contains("not allowed"));
     }
 }

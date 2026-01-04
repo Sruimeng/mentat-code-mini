@@ -2,8 +2,11 @@
 //!
 //! 提供统一的 Tool trait 和 ToolRegistry 用于管理所有可用工具。
 
+mod path_validator;
 mod read_file;
 mod write_file;
+
+// PathValidator 和 PathValidationError 在内部使用，不需要公开导出
 
 use serde_json::Value;
 use std::collections::HashMap;

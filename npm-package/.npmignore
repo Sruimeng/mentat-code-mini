@@ -1,0 +1,36 @@
+# 排除不必要的文件以减小 npm 包体积
+
+# 开发文件
+*.md
+!README.md
+.gitignore
+.github/
+.vscode/
+
+# 测试文件
+tests/
+test/
+__tests__/
+*.test.js
+*.spec.js
+
+# 示例文件
+examples/
+docs/
+
+# 构建产物和缓存
+*.log
+.DS_Store
+Thumbs.db
+
+# Rust 相关（不应该在 npm 包中）
+target/
+Cargo.lock
+Cargo.toml
+src/
+llmdoc/
+
+# 其他
+.env
+.env.*
+*.local

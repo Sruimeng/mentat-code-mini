@@ -1,10 +1,10 @@
 //! read_file 工具 - 读取文件内容
 
+use super::path_validator::PathValidator;
 use super::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
-use std::path::Path;
 
 /// read_file 工具的输入参数
 #[derive(Debug, Deserialize)]
@@ -65,18 +65,32 @@ impl Tool for ReadFileTool {
 
 /// 执行文件读取
 fn execute_read_file(input: &ReadFileInput) -> ReadFileOutput {
-    let path = Path::new(&input.file_path);
+    // 创建路径验证器
+    let validator = match PathValidator::new() {
+        Ok(v) => v,
+        Err(e) => {
+            return ReadFileOutput {
+                success: false,
+                content: None,
+                error: Some(format!("Failed to initialize path validator: {}", e)),
+            };
+        }
+    };
 
-    // 安全检查：禁止读取敏感路径
-    if input.file_path.contains("..") {
-        return ReadFileOutput {
-            success: false,
-            content: None,
-            error: Some("Path traversal not allowed".to_string()),
-        };
-    }
+    // 安全检查：验证路径
+    let validated_path = match validator.validate_for_read(&input.file_path) {
+        Ok(p) => p,
+        Err(e) => {
+            return ReadFileOutput {
+                success: false,
+                content: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
 
-    match fs::read_to_string(path) {
+    // 读取文件
+    match fs::read_to_string(&validated_path) {
         Ok(content) => ReadFileOutput {
             success: true,
             content: Some(content),
@@ -116,6 +130,22 @@ mod tests {
         let tool = ReadFileTool;
         let input = serde_json::json!({"file_path": "../etc/passwd"});
         let result = tool.execute(&input);
-        assert!(result.contains("traversal"));
+        assert!(result.contains("traversal") || result.contains("not allowed"));
+    }
+
+    #[test]
+    fn test_absolute_path_blocked() {
+        let tool = ReadFileTool;
+        let input = serde_json::json!({"file_path": "/etc/passwd"});
+        let result = tool.execute(&input);
+        assert!(result.contains("Absolute") || result.contains("not allowed"));
+    }
+
+    #[test]
+    fn test_nested_traversal_blocked() {
+        let tool = ReadFileTool;
+        let input = serde_json::json!({"file_path": "src/../../../etc/passwd"});
+        let result = tool.execute(&input);
+        assert!(result.contains("traversal") || result.contains("not allowed"));
     }
 }
