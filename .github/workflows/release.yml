@@ -46,9 +46,7 @@ jobs:
       - name: Prepare Binary
         shell: bash
         run: |
-          # ⚠️ 注意：这里必须是你 Cargo.toml [[bin]] 里写的名字
-          # 根据之前的沟通，你的 bin 名字是 "mentat-cli-mini"
-          SRC_NAME="mentat-cli-mini"
+          SRC_NAME="mentat-code-mini"
           
           # Windows 下源文件有 .exe 后缀
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
