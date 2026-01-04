@@ -4,7 +4,7 @@ type: index
 related_ids: []
 ---
 
-# mentat-code 文档索引
+# mentat-code-mini 文档索引
 
 > LLM 优化的代码库文档系统
 
@@ -96,7 +96,7 @@ llmdoc/
 
 | 指标 | 值 |
 |------|-----|
-| 项目名称 | mentat-code |
+| 项目名称 | mentat-code-mini |
 | 语言 | Rust (Edition 2024) |
 | 当前版本 | 0.1.0 |
 | 开发阶段 | 初始化 |

@@ -19,7 +19,7 @@ related_ids: [constitution]
 ### Cargo.toml
 ```toml
 [package]
-name = "mentat-code"
+name = "mentat-code-mini"
 version = "0.1.0"
 edition = "2024"
 
@@ -52,7 +52,7 @@ cargo clippy
 ## 项目结构
 
 ```
-mentat-code/
+mentat-code-mini/
 ├── Cargo.toml       # 项目配置
 ├── Cargo.lock       # 依赖锁定
 ├── src/

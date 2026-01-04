@@ -19,7 +19,7 @@ src/type/
 
 ## 预期模型结构
 
-根据项目名称 `mentat-code`，建议的核心类型：
+根据项目名称 `mentat-code-mini`，建议的核心类型：
 
 ```rust
 // src/type/mod.rs

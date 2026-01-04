@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/Sruimeng/mentat-code-mini"
 
 [[bin]]
-name = "mentat-cli-mini"
+name = "mentat-code-mini"
 path = "src/main.rs"
 
 [dependencies]
