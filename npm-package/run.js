@@ -5,7 +5,7 @@ const os = require("os");
 const { version } = require("./package.json");
 
 const REPO = "Sruimeng/mentat-code-mini";
-const NAME = "mentat-code-mini";
+const NAME = "mentat";
 
 /**
  * 获取当前平台的二进制文件后缀
